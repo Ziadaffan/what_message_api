@@ -1,0 +1,36 @@
+{
+  "name": "whatsapp-clone-backend",
+  "version": "1.0.0",
+  "description": "Real-time chat API with Node.js, Express, PostgreSQL and Socket.io",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "migration:generate": "prisma migrate dev --create-only --name",
+    "migration:run": "prisma migrate dev",
+    "migration:deploy": "prisma migrate deploy",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "prisma:reset": "prisma migrate reset --force"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.13.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3",
+    "pg-hstore": "^2.3.4",
+    "prisma": "^6.13.0",
+    "sequelize": "^6.33.0",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "globals": "^17.3.0",
+    "nodemon": "^3.0.1",
+    "sequelize-cli": "^6.6.5"
+  }
+}
