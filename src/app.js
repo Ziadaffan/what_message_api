@@ -33,11 +33,15 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/blocks', blockRoutes);
 app.use('/api/chats', chatRoutes);
 
+// Socket Helper
+const socketHelper = require('./lib/socket');
+socketHelper.init(io);
+
 // Socket Handler
 require('./sockets/socket.handler')(io);
 
 // Basic error handler
-app.use((err, req, res, next) => {
+app.use((err, req, res) => {
   console.error(err.stack);
   res.status(500).json({ message: 'Internal Server Error', error: err.message });
 });

@@ -14,7 +14,7 @@ module.exports = (io) => {
 
       socket.user = user;
       next();
-    } catch (err) {
+    } catch {
       next(new Error('Authentication error'));
     }
   });
@@ -24,108 +24,133 @@ module.exports = (io) => {
 
     socket.join(socket.user.id);
 
-    await prisma.user.update({
-      where: { id: socket.user.id },
-      data: { isOnline: true, lastSeen: new Date() }
-    });
+    try {
+      await prisma.user.update({
+        where: { id: socket.user.id },
+        data: { isOnline: true, lastSeen: new Date() }
+      });
+    } catch (error) {
+      console.error(`Error updating user online status: ${error.message}`);
+    }
 
     const onlineUsers = await prisma.user.findMany({ where: { isOnline: true } });
 
     io.emit('get_online_users', onlineUsers);
 
+    // Broadcast to all users that this user is online
+    socket.broadcast.emit('user_online', socket.user.id);
+
     socket.on('send_message', async (data) => {
-      const { receiverId, content, type = 'text' } = data;
+      try {
+        const { receiverId, content, type = 'text', tempId } = data;
 
-      const isBlocked = await prisma.block.findFirst({
-        where: { blockerId: receiverId, blockedId: socket.user.id },
-      });
-      if (isBlocked) return socket.emit('error', { message: 'You are blocked by this user' });
+        const isBlocked = await prisma.block.findFirst({
+          where: { blockerId: receiverId, blockedId: socket.user.id },
+        });
+        if (isBlocked) return socket.emit('error', { message: 'You are blocked by this user' });
 
-      let chat = await prisma.chat.findFirst({
-        where: {
-          type: 'private',
-          users: {
-            every: { userId: { in: [socket.user.id, receiverId] } }
-          }
-        },
-        include: { users: true },
-      });
-
-      if (!chat) {
-        const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
-
-        chat = await prisma.chat.create({
-          data: {
+        let chat = await prisma.chat.findFirst({
+          where: {
             type: 'private',
-            name: receiver.username,
             users: {
-              create: [
-                { user: { connect: { id: socket.user.id } } },
-                { user: { connect: { id: receiverId } } },
-              ]
+              every: { userId: { in: [socket.user.id, receiverId] } }
             }
           },
-          include: { users: true }
+          include: { users: true },
         });
-      }
 
-      const chatId = chat.id;
+        if (!chat) {
+          const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
 
-      const message = await prisma.message.create({
-        data: {
-          chatId,
+          if (!receiver) {
+            return socket.emit('error', { message: 'Receiver not found' });
+          }
+
+          chat = await prisma.chat.create({
+            data: {
+              type: 'private',
+              name: receiver.username,
+              users: {
+                create: [
+                  { user: { connect: { id: socket.user.id } } },
+                  { user: { connect: { id: receiverId } } },
+                ]
+              }
+            },
+            include: { users: true }
+          });
+        }
+
+        const chatId = chat.id;
+
+        const message = await prisma.message.create({
+          data: {
+            chatId,
+            senderId: socket.user.id,
+            receiverId,
+            content,
+            type,
+          },
+        });
+
+        const messagePayload = {
+          id: message.id,
           senderId: socket.user.id,
           receiverId,
-          content,
-          type,
-        },
-      });
+          chatId,
+          content: message.content,
+          createdAt: message.createdAt,
+          Sender: {
+            username: socket.user.username,
+            avatar: socket.user.avatar,
+          },
+        };
 
-      const messageWithSender = {
-        ...message,
-        Sender: {
-          username: socket.user.username,
-          avatar: socket.user.avatar,
-        },
-      };
+        // Emit to receiver
+        io.to(receiverId).emit('receive_message', messagePayload);
 
-      io.to(receiverId).emit('receive_message', messageWithSender);
+        // Emit back to sender for confirmation with tempId
+        socket.emit('receive_message', {
+          ...messagePayload,
+          tempId  // Frontend uses this to map temp message to real message
+        });
+      } catch (error) {
+        console.error('Error sending message:', error);
+        socket.emit('error', { message: 'Failed to send message' });
+      }
     });
 
     socket.on('typing', (data) => {
       const { receiverId, isTyping } = data;
-      io.to(receiverId).emit('display_typing', {
+      io.to(receiverId).emit('typing_status', {
         senderId: socket.user.id,
         isTyping
       });
     });
 
-    socket.on('mark_read', async (data) => {
-      const { chatId, receiverId } = data;
-
-      await prisma.message.updateMany({
-        where: {
-          chatId,
-          receiverId: socket.user.id,
-          isRead: false
-        },
-        data: { isRead: true }
-      });
-
-
-
-      io.to(receiverId).emit('message_read', { chatId, readerId: socket.user.id });
+    socket.on('friend_request_sent', (data) => {
+      const { receiverId } = data;
+      io.to(receiverId).emit('friend_request_received', socket.user);
     });
 
     socket.on('disconnect', async () => {
-      await prisma.user.update({
-        where: { id: socket.user.id },
-        data: { lastSeen: new Date(), isOnline: false }
-      });
+      try {
+        await prisma.user.update({
+          where: { id: socket.user.id },
+          data: { lastSeen: new Date(), isOnline: false }
+        });
 
-      const onlineUsers = await prisma.user.findMany({ where: { isOnline: true } });
-      io.emit('get_online_users', onlineUsers);
-      console.log(`User disconnected: ${socket.user.username}`);
+        const onlineUsers = await prisma.user.findMany({ where: { isOnline: true } });
+        io.emit('get_online_users', onlineUsers);
+
+        // Broadcast to all users that this user is offline
+        socket.broadcast.emit('user_offline', socket.user.id);
+
+        console.log(`User disconnected: ${socket.user.username}`);
+      } catch (error) {
+        console.error(`Error handling disconnect for user ${socket.user.username}: ${error.message}`);
+        // Ensure we don't crash even if database update fails
+      }
     });
   });
 };

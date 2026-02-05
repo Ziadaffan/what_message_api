@@ -72,7 +72,18 @@ exports.respondToRequest = async (req, res) => {
     }
 
     const request = await prisma.friendRequest.findUnique({
-      where: { id: request_id }
+      where: { id: request_id },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            avatar: true,
+            isOnline: true
+          }
+        }
+      }
     });
 
     if (!request || request.receiverId !== req.user.id) {
@@ -85,6 +96,7 @@ exports.respondToRequest = async (req, res) => {
     });
 
     if (status === 'accepted') {
+      // Create notification
       await prisma.notification.create({
         data: {
           userId: request.senderId,
@@ -94,6 +106,71 @@ exports.respondToRequest = async (req, res) => {
           metaData: { userId: req.user.id }
         }
       });
+
+      // Create chat for the new friends
+      const chat = await prisma.chat.create({
+        data: {
+          type: 'private',
+          name: null,
+          users: {
+            create: [
+              { user: { connect: { id: request.senderId } } },
+              { user: { connect: { id: req.user.id } } }
+            ]
+          }
+        },
+        include: {
+          users: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  email: true,
+                  avatar: true,
+                  isOnline: true
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Prepare chat data for both users
+      const chatForSender = {
+        id: chat.id,
+        friendId: req.user.id,
+        friend: {
+          id: req.user.id,
+          username: req.user.username,
+          email: req.user.email,
+          avatar: req.user.avatar,
+          isOnline: req.user.isOnline
+        },
+        lastMessage: null,
+        createdAt: chat.createdAt
+      };
+
+      const chatForReceiver = {
+        id: chat.id,
+        friendId: request.sender.id,
+        friend: {
+          id: request.sender.id,
+          username: request.sender.username,
+          email: request.sender.email,
+          avatar: request.sender.avatar,
+          isOnline: request.sender.isOnline
+        },
+        lastMessage: null,
+        createdAt: chat.createdAt
+      };
+
+      // Emit new_chat event to both users
+      const socketHelper = require('../lib/socket');
+      const io = socketHelper.getIO();
+
+      io.to(request.senderId).emit('new_chat', chatForSender);
+      io.to(req.user.id).emit('new_chat', chatForReceiver);
     }
 
     res.json(updated);
@@ -117,10 +194,24 @@ exports.getFriends = async (req, res) => {
       },
       include: {
         sender: {
-          select: { id: true, username: true, avatar: true, status: true }
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            avatar: true,
+            status: true,
+            isOnline: true
+          }
         },
         receiver: {
-          select: { id: true, username: true, avatar: true, status: true }
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            avatar: true,
+            status: true,
+            isOnline: true
+          }
         }
       }
     });

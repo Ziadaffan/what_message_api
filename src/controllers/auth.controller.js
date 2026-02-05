@@ -2,17 +2,13 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const prisma = require('../lib/db');
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-};
-
 // REGISTER
 exports.register = async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
-    const userExists = await prisma.user.findUnique({
-      where: { email }
+    const userExists = await prisma.user.findFirst({
+      where: { OR: [{ username }, { email }] }
     });
 
     if (userExists) {
@@ -29,13 +25,12 @@ exports.register = async (req, res) => {
       }
     });
 
-    res.status(201).json({
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      token: generateToken(user.id)
-    });
+    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, avatar: user.avatar }, process.env.JWT_SECRET, { expiresIn: '30d' });
+
+    res.status(201).json({ token });
   } catch (error) {
+    console.log(error);
+
     res.status(500).json({ message: error.message });
   }
 };
@@ -59,14 +54,9 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    res.json({
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      avatar: user.avatar,
-      status: user.status,
-      token: generateToken(user.id)
-    });
+    const token = jwt.sign({ id: user.id, username: user.username, email: user.email, avatar: user.avatar }, process.env.JWT_SECRET, { expiresIn: '30d' });
+
+    res.json({ token });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
