@@ -37,8 +37,16 @@ module.exports = (io) => {
 
     io.emit('get_online_users', onlineUsers);
 
-    // Broadcast to all users that this user is online
     socket.broadcast.emit('user_online', socket.user.id);
+
+    socket.on('join_chat', (data) => {
+      socket.activeChatId = data.chatId;
+      console.log(`User ${socket.user.username} joined chat: ${data.chatId}`);
+    });
+
+    socket.on('leave_chat', () => {
+      socket.activeChatId = null;
+    });
 
     socket.on('send_message', async (data) => {
       try {
@@ -83,6 +91,9 @@ module.exports = (io) => {
 
         const chatId = chat.id;
 
+        const receiverSockets = await io.in(receiverId).fetchSockets();
+        const isReceiverInChat = receiverSockets.some(s => s.activeChatId === chatId);
+
         const message = await prisma.message.create({
           data: {
             chatId,
@@ -90,6 +101,7 @@ module.exports = (io) => {
             receiverId,
             content,
             type,
+            isRead: isReceiverInChat,
           },
         });
 
@@ -100,19 +112,27 @@ module.exports = (io) => {
           chatId,
           content: message.content,
           createdAt: message.createdAt,
+          isRead: message.isRead,
           Sender: {
             username: socket.user.username,
             avatar: socket.user.avatar,
           },
         };
 
-        // Emit to receiver
         io.to(receiverId).emit('receive_message', messagePayload);
 
-        // Emit back to sender for confirmation with tempId
+        const unreadCount = await prisma.message.count({
+          where: {
+            chatId,
+            isRead: false,
+            receiverId: receiverId
+          }
+        });
+        io.to(receiverId).emit('unread_count', { chatId, count: unreadCount });
+
         socket.emit('receive_message', {
           ...messagePayload,
-          tempId  // Frontend uses this to map temp message to real message
+          tempId
         });
       } catch (error) {
         console.error('Error sending message:', error);
@@ -133,6 +153,35 @@ module.exports = (io) => {
       io.to(receiverId).emit('friend_request_received', socket.user);
     });
 
+
+    socket.on('get_unread_count', async (data) => {
+      const { chatId } = data;
+      const receiverId = socket.user.id;
+      const unreadCount = await prisma.message.count({
+        where: {
+          chatId,
+          isRead: false,
+          receiverId: receiverId
+        }
+      });
+      socket.emit('unread_count', { chatId, count: unreadCount });
+    });
+
+    socket.on('read_messages', async (data) => {
+      const { chatId } = data;
+      await prisma.message.updateMany({
+        where: {
+          chatId,
+          isRead: false,
+          receiverId: socket.user.id
+        },
+        data: {
+          isRead: true
+        }
+      });
+      socket.emit('messages_read', { success: true, chatId });
+    });
+
     socket.on('disconnect', async () => {
       try {
         await prisma.user.update({
@@ -143,13 +192,11 @@ module.exports = (io) => {
         const onlineUsers = await prisma.user.findMany({ where: { isOnline: true } });
         io.emit('get_online_users', onlineUsers);
 
-        // Broadcast to all users that this user is offline
         socket.broadcast.emit('user_offline', socket.user.id);
 
         console.log(`User disconnected: ${socket.user.username}`);
       } catch (error) {
         console.error(`Error handling disconnect for user ${socket.user.username}: ${error.message}`);
-        // Ensure we don't crash even if database update fails
       }
     });
   });
