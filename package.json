@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "postinstall": "prisma generate",
+    "build": "echo build done",
     "migration:generate": "prisma migrate dev --create-only --name",
     "migration:run": "prisma migrate dev",
     "migration:deploy": "prisma migrate deploy",
