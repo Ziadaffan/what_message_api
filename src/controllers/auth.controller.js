@@ -8,7 +8,7 @@ exports.register = async (req, res) => {
     const { username, email, password } = req.body;
 
     const userExists = await prisma.user.findFirst({
-      where: { OR: [{ username }, { email }] }
+      where: { OR: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }] }
     });
 
     if (userExists) {
@@ -19,8 +19,8 @@ exports.register = async (req, res) => {
 
     const user = await prisma.user.create({
       data: {
-        username,
-        email,
+        username: username.toLowerCase(),
+        email: email.toLowerCase(),
         password: hashedPassword
       }
     });
@@ -41,7 +41,7 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     const user = await prisma.user.findUnique({
-      where: { email }
+      where: { email: email.toLowerCase() }
     });
 
     if (!user) {
